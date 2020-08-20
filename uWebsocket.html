@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Sample Chat App Using uWebsocket</title>
+        <meta charset="utf-8" />
+        <link rel="apple-touch-icon" sizes="57x57" href="images/apple-icon-57x57.png">
+        <link rel="apple-touch-icon" sizes="60x60" href="images/apple-icon-60x60.png">
+        <link rel="apple-touch-icon" sizes="72x72" href="images/apple-icon-72x72.png">
+        <link rel="apple-touch-icon" sizes="76x76" href="images/apple-icon-76x76.png">
+        <link rel="apple-touch-icon" sizes="114x114" href="images/apple-icon-114x114.png">
+        <link rel="apple-touch-icon" sizes="120x120" href="images/apple-icon-120x120.png">
+        <link rel="apple-touch-icon" sizes="144x144" href="images/apple-icon-144x144.png">
+        <link rel="apple-touch-icon" sizes="152x152" href="images/apple-icon-152x152.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="images/apple-icon-180x180.png">
+        <link rel="icon" type="image/png" sizes="192x192"  href="images/android-icon-192x192.png">
+        <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="96x96" href="images/favicon-96x96.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+        <link rel="manifest" href="images/manifest.json">
+        <meta name="msapplication-TileColor" content="#ffffff">
+        <meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+        <meta name="theme-color" content="#ffffff">
+        <script>
+            // Global socket resource set
+            // when user joins chat session
+            let socketResource = null;
+            function connectToWebSocket() {
+                var socketLocation = 'ws://' + document.location.host + ':3000';
+                var wsPath = '/chatPortal?'
+                const exampleSocket = new WebSocket(socketLocation + wsPath, 'protocolOne');
+                exampleSocket.onopen = () => {
+                    document.getElementById('socket_status').innerHTML = 'Connected';
+                    console.log('websocket established')
+                    console.log('buffered amount: ' + exampleSocket.bufferedAmount)
+                };
+                exampleSocket.onclose = () => {
+                    document.getElementById('socket_status').innerHTML = 'Closed';
+                    console.log('websocket connection closed')
+                };
+                exampleSocket.onerror = () => {
+                    document.getElementById('socket_status').innerHTML = 'Error';
+                    console.log('websocket error encountered')
+                };
+                exampleSocket.onmessage = (event) => {
+                    console.log('websocket message received: ' + event.data);
+                }
+                return exampleSocket;
+            }
+            
+            function prepareChat() {
+                if (!document.getElementById('chatInput')) {
+                var chatInput = document.createElement('input');
+                chatInput.id = 'chatInput';
+                var chatSend = document.createElement('button');
+                chatSend.innerHTML = 'Send';
+                    chatSend.onclick = () => {
+                        console.log(socketResource?.readyState);
+                        socketResource.send(document.getElementById('chatInput').value);
+                    }
+                    document.body.appendChild(chatInput);
+                    document.body.appendChild(chatSend);
+                }
+            }
+
+            document.addEventListener('readystatechange', (event) => {
+                document.getElementById('joinchat').onclick = () => {
+                    if (socketResource == null
+                      || socketResource.readyState == WebSocket.CLOSED) {
+                        socketResource = connectToWebSocket();
+                        prepareChat();
+                    }
+                }
+            });
+        </script>
+    </head>
+    <body>
+        Websocket Status:<div id="socket_status"></div>
+        Join As: <input name="username" /><button id="joinchat" name="join" type="button">Join</button>
+    </body>
+</html>
