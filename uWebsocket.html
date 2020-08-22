@@ -20,61 +20,390 @@
         <meta name="msapplication-TileColor" content="#ffffff">
         <meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
         <meta name="theme-color" content="#ffffff">
+        <style>
+            body {
+                font-family: sans-serif;
+            }
+            div.scroll {
+                background-color: #fed9ff;
+                width: 600px;
+                height: 150px;
+                overflow-x: hidden;
+                overflow-y: auto;
+                text-align: left;
+                padding: 2px;
+            }
+            div.members_window {
+                width: 600px;
+                height: 150px;
+                overflow-x: hidden;
+                overflow-y: auto;
+                text-align: left;
+                padding: 2px;
+            }
+            li.chatMessage {
+                white-space: pre;
+            }
+            li.online {
+                color: green;
+            }
+            li.offline {
+                color: gray;
+            }
+        </style>
         <script>
             // Global socket resource set
             // when user joins chat session
             let socketResource = null;
+
+            let channels = new Map();
+
+            let chosenChannel = null;
+
+            /*
+            Structure
+             username => {
+                 id: "id",
+                 name: "name",
+                 status: "online"|"offline"
+             }
+
+             */
+            let members = new Map();
+
+            /**
+             *
+             */
             function connectToWebSocket() {
                 var socketLocation = 'ws://' + document.location.host + ':3000';
                 var wsPath = '/chatPortal?'
                 const exampleSocket = new WebSocket(socketLocation + wsPath, 'protocolOne');
                 exampleSocket.onopen = () => {
-                    document.getElementById('socket_status').innerHTML = 'Connected';
+                    // Register logged in user
+                    socketResource.send(JSON.stringify({
+                        message_type: 'login',
+                        username: document.getElementById('username').value
+                    }));
+                    prepareLoginHome();
+                    document.getElementById('notification_window').innerHTML = 'Connected';
+                    createLogoutSection();
                     console.log('websocket established')
                     console.log('buffered amount: ' + exampleSocket.bufferedAmount)
                 };
+
                 exampleSocket.onclose = () => {
-                    document.getElementById('socket_status').innerHTML = 'Closed';
+                    document.getElementById('notification_window').innerHTML = 'Closed';
                     console.log('websocket connection closed')
                 };
+
                 exampleSocket.onerror = () => {
-                    document.getElementById('socket_status').innerHTML = 'Error';
+                    document.getElementById('notification_window').innerHTML = 'Error';
                     console.log('websocket error encountered')
                 };
+
                 exampleSocket.onmessage = (event) => {
                     console.log('websocket message received: ' + event.data);
+                    let messageObject = JSON.parse(event.data);
+
+                    switch (messageObject.message_type) {
+
+                        // A user logged in
+                        case 'user_login':
+                            if (!members.has(messageObject.user_info.name)) {
+                                members.set(messageObject.user_info.name, messageObject.user_info);
+                                let memberNode = document.createElement('li');
+                                memberNode.className = 'online';
+                                memberNode.innerHTML = messageObject.user_info.name;
+                                let membersList = document.getElementById('membersList');
+                                membersList.appendChild(memberNode);
+                            }
+                            else {
+                                document.getElementById('membersList').childNodes.forEach((node) => {
+                                    if (node.innerHTML == messageObject.user_info.name) {
+                                        node.className = 'online';
+                                    }
+                                })
+                            }
+                            break;
+
+                        // A user logged out
+                        case 'user_logout':
+                            console.log('User "' + messageObject.user_info.name + '" logged out');
+                            let userInfo = members.get(messageObject.user_info.name);
+                            if (!userInfo) {
+                                userInfo = messageObject.user_info;
+                            }
+                            userInfo.status = 'offline';
+                            members.set(messageObject.user_info.name, userInfo);
+                            updateMembersStatusDisplay(userInfo);
+                            break;
+
+                        // By default, assume it's a discussion
+                        case 'chat':
+                            let messageNode = document.createElement('li');
+                            messageNode.className = 'chatMessage';
+                            messageNode.innerHTML = messageObject.source_name + ': ' + messageObject.body;
+                            document.getElementById('chatMessages-' + messageObject.topic).appendChild(messageNode);
+                            let chatWindow = document.getElementById('chatWindow-' + messageObject.topic);
+                            chatWindow.scrollTo(0, chatWindow.scrollHeight);
+                            break;
+                        case 'channel_created':
+                            createChannel(messageObject.name);
+                            break;
+                        default:
+                            console.log('Unknown message type received: ' + messageObject.message_type);
+                            break;
+                    }
                 }
+
                 return exampleSocket;
             }
-            
-            function prepareChat() {
-                if (!document.getElementById('chatInput')) {
-                var chatInput = document.createElement('input');
-                chatInput.id = 'chatInput';
-                var chatSend = document.createElement('button');
-                chatSend.innerHTML = 'Send';
-                    chatSend.onclick = () => {
-                        console.log(socketResource?.readyState);
-                        socketResource.send(document.getElementById('chatInput').value);
-                    }
-                    document.body.appendChild(chatInput);
-                    document.body.appendChild(chatSend);
+
+            /**
+             *
+             */
+            function createLogoutSection() {
+                if (!document.getElementById('logoutButton')) {
+                    var logoutButton = document.createElement('button');
+                    logoutButton.id = 'logoutButton';
+                    logoutButton.innerHTML = 'Leave';
+                    logoutButton.onclick = () => {
+                        console.log('Leaving')
+                        if (socketResource.send != null
+                         && socketResource.readyState == WebSocket.OPEN) {
+                            socketResource.send(JSON.stringify({
+                                message_type: 'logout'
+                            }));
+                        }
+                    };
+                    document.getElementById('userSession').appendChild(logoutButton);
                 }
             }
 
-            document.addEventListener('readystatechange', (event) => {
-                document.getElementById('joinchat').onclick = () => {
-                    if (socketResource == null
-                      || socketResource.readyState == WebSocket.CLOSED) {
-                        socketResource = connectToWebSocket();
-                        prepareChat();
-                    }
+            /**
+             *
+             */
+            function prepareLoginHome() {
+                if (!document.getElementById('channelWindow')) {
+                    createChannelSection();
                 }
+                if (!document.getElementById('membersWindow')) {
+                    createMembersSection();
+                }
+            }
+            
+            /**
+             *
+             */
+            function prepareChat(channelName) {
+                node = document.getElementById('chatSection-' + channelName);
+                if (!node) {
+                    createChatSection(channelName);
+                } 
+                else {
+                    node.hidden = false;
+                }
+            }
+
+            /**
+             *
+             */
+            function sendChatMessageEvent(event) {
+                let chatInputNode = document.getElementById('chatInput-' + chosenChannel);
+
+                if (chatInputNode.value == '') {return;}
+                if (chosenChannel == null) {
+                    console.log('No channel selected');
+                    return;
+                }
+
+                if (socketResource.send != null
+                 && socketResource.readyState == WebSocket.OPEN) {
+                    socketResource.send(JSON.stringify({
+                        message_type: 'chat',
+                        body: chatInputNode.value,
+                        topic: chosenChannel
+                    }));
+                    chatInputNode.value = '';
+                }
+                else {
+                    document.getElementById('notification_window').innerHTML = 'Not connected.';
+                }
+            }
+
+            /**
+             *
+             */
+            function createChatSection(channelName) {
+                
+                // Create chat window
+                var chatWindow = document.createElement('div');
+                chatWindow.className = 'scroll';
+                chatWindow.id = 'chatWindow-' + channelName;
+                var chatMessages = document.createElement('ul');
+                chatMessages.id = 'chatMessages-' + channelName;
+                chatWindow.appendChild(chatMessages);
+
+                // Create chat text input and submit button
+                var chatInput = document.createElement('input');
+                chatInput.id = 'chatInput-'+ channelName;
+                var chatSend = document.createElement('button');
+                chatSend.innerHTML = 'Send';
+                chatSend.onclick = sendChatMessageEvent;
+
+                var chatSectionHeader = document.createElement('div');
+                chatSectionHeader.innerHTML = channelName;
+
+                var chatSection = document.createElement('div');
+                chatSection.id = 'chatSection-' + channelName;
+                chatSection.appendChild(chatSectionHeader);
+                chatSection.appendChild(chatWindow);
+                chatSection.appendChild(chatInput);
+                chatSection.appendChild(chatSend);
+
+                document.body.appendChild(chatSection);
+
+            }
+
+            /**
+             *
+             */
+            function createChannelSection() {
+                    // Create channels window
+                    var channelLabel = document.createElement('div');
+                    channelLabel.innerHTML = 'Channel List';
+                    var channelWindow = document.createElement('div');
+                    channelWindow.className = 'scroll';
+                    channelWindow.id = 'channelWindow';
+                    var channelList = document.createElement('ul');
+                    channelList.id = 'channelList';
+                    var channelSend = document.createElement('button');
+                    channelSend.innerHTML = 'Create';
+                    channelSend.onclick = createChannelEvent;
+                    var channelInput = document.createElement('input');
+                    channelInput.id = 'channelInput';
+                    channelWindow.appendChild(channelList);
+                    document.body.appendChild(channelLabel);
+                    document.body.appendChild(channelWindow);
+                    document.body.appendChild(channelInput);
+                    document.body.appendChild(channelSend);
+            }
+
+            /**
+             *
+             */
+            function createMembersSection() {
+                var membersLabel = document.createElement('div');
+                membersLabel.innerHTML = 'Members';
+
+                var membersWindow = document.createElement('div');
+                membersWindow.id = 'membersWindow';
+                membersWindow.className = 'members_window';
+                var membersList = document.createElement('ul');
+                membersList.id = 'membersList';
+
+                membersWindow.appendChild(membersList);
+                document.body.appendChild(membersLabel);
+                document.body.appendChild(membersWindow);
+            }
+
+            /**
+             *
+             */
+            function loginChat(event) {
+                if (socketResource == null
+                  || socketResource.readyState == WebSocket.CLOSED) {
+                    socketResource = connectToWebSocket();
+                    document.getElementById('notification_window').innerHTML = 'Connecting...';
+                }
+            }
+            
+            /**
+             * Create a new channel and add 
+             * channel list
+             */
+            function createChannelEvent(event) {
+                console.log('create channel event clicked');
+                let channelInput = document.getElementById('channelInput');
+                if (!channels.has(channelInput.value)) {
+                    socketSend({
+                        message_type: 'channel_create',
+                        name: channelInput.value,
+                        owner: ''
+                    });
+                    createChannel(channelInput.value);
+                    channelInput.value = '';
+                }
+            }
+
+            /**
+             *
+             */
+            function createChannel(channelName) {
+                if (!channels.has(channelName)) {
+                    channels.set(channelName, JSON.stringify({name: channelName}));
+
+                    let channelLink = document.createElement('a');
+                    channelLink.onclick = selectChannelEvent;
+                    channelLink.innerHTML = channelName;
+                    let channelItem= document.createElement('li');
+                    channelItem.appendChild(channelLink);
+                    document.getElementById('channelList').appendChild(channelItem);
+                }
+
+            }
+
+            function socketSend(message) {
+                if (socketResource
+                  && socketResource.readyState == WebSocket.OPEN) {
+                    socketResource.send(JSON.stringify(message));
+                }
+            }
+
+            function selectChannelEvent(event) {
+                console.log('Selecting channel: ' + event.target.innerHTML);
+                if (chosenChannel != null) {
+                    let node = document.getElementById('chatSection-' + chosenChannel)
+                    node.hidden = true;
+                }
+                chosenChannel = event.target.innerHTML;
+                socketSend({
+                    message_type: 'select_channel',
+                    topic: chosenChannel
+                });
+                prepareChat(chosenChannel);
+            }
+
+            /**
+             *
+             */
+            function updateMembersStatusDisplay(member) {
+                let membersList = document.getElementById('membersList');
+                let userFound = false;
+                membersList.childNodes.forEach((node) => {
+                    if (node.innerHTML == member.name) {
+                        node.className = (member.status == 'offline') ?'offline':'online';
+                        userFound = true;
+                    }
+                });
+                if (!userFound) {
+                    let node = document.createElement('li');
+                    node.innerHTML = member.name;
+                    node.className = member.status;
+                    membersList.appendChild(node);
+                }
+                
+            }
+
+            document.addEventListener('readystatechange', (event) => {
+                document.getElementById('joinchat').onclick = loginChat;
             });
         </script>
     </head>
     <body>
-        Websocket Status:<div id="socket_status"></div>
-        Join As: <input name="username" /><button id="joinchat" name="join" type="button">Join</button>
+        <div id="userSession">
+            Websocket Status:<div id="notification_window"></div>
+            Join As: <input id="username" name="username" /><button id="joinchat" name="join" type="button">Join</button>
+        </div>
     </body>
 </html>
